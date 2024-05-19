@@ -15,6 +15,9 @@ library(reshape2)
 library(caret)
 library(dplyr)
 library(glmnet)
+
+library(foreach)
+library(doParallel)
 ```
 
 ## Eksploracja danych
@@ -171,11 +174,11 @@ Chcemy zminimalizować prawdopodobieństwo, że w danym foldzie duża część w
 ```{r - tuning hiperparametrów}
 
 # Foldy do walidacji krzyżowej
-folds <- create_folds(X_train, k = 5)
+folds <- create_folds(X_train, k = 10)
 
 # Siatka hiperparametrów
 alphas <- c(0, 0.1, 0.5, 0.9, 1)  # 0 dla Ridge, 1 dla Lasso
-lambdas <- 10^seq(2, -2, length = 10)  # od 100 do 0.01
+lambdas <- 10^seq(1, -2, length = 10)  # od 10 do 0.01
 
 # Pusta lista do zapisania wyników CV
 results <- list()
@@ -199,7 +202,7 @@ for (alpha in alphas) {
       Y_test_fold <- Y_train[test_indices, ]
       
       # Tworzymy model ElasticNet
-      model <- glmnet(X_train_fold, Y_train_fold, alpha = alpha, lambda = lambda)
+      model <- glmnet(X_train_fold, Y_train_fold, alpha = alpha, lambda = lambda, trace.it = TRUE)
       
       # Predykcje dla zbioru testowego
       predictions <- predict(model, s = lambda, newx = X_test_fold)
@@ -218,6 +221,181 @@ print(results)
 # Wybieramy najlepsze hiperparametry
 best_params <- which.min(unlist(results))
 results[best_params]
+
+```
+
+
+```{r - tuning wielowątkowo}
+# Ustawiamy liczbę rdzeni
+numCores <- parallel::detectCores() - 1
+cl <- makeCluster(numCores)
+registerDoParallel(cl)
+
+# Foldy do walidacji krzyżowej
+folds <- create_folds(X_train, k = 10)
+
+# Siatka hiperparametrów
+alphas <- c(0, 0.1, 0.5, 0.9, 1)  # 0 dla Ridge, 1 dla Lasso
+lambdas <- 10^seq(1, -2, length = 10)  # od 10 do 0.01
+
+# Run cross-validation in parallel
+results <- foreach(alpha = alphas, .combine = 'c', .packages = 'glmnet') %dopar% {
+  alpha_results <- list()
+  
+  for (lambda in lambdas) {
+    fold_metrics <- list()
+    
+    for (i in seq_along(folds)) {
+      fold <- folds[[i]]
+      
+      # Training and testing indices
+      train_indices <- fold$train
+      test_indices <- fold$test
+      
+      # Split data
+      X_train_fold <- as.matrix(X_train[train_indices, , drop = FALSE])
+      Y_train_fold <- Y_train[train_indices, ]
+      X_test_fold <- as.matrix(X_train[test_indices, , drop = FALSE])
+      Y_test_fold <- Y_train[test_indices, ]
+      
+      # Fit ElasticNet model
+      model <- glmnet(X_train_fold, Y_train_fold, alpha = alpha, lambda = lambda)
+      
+      # Predictions for the test set
+      predictions <- predict(model, s = lambda, newx = X_test_fold)
+      
+      # MSE for the test fold
+      fold_metrics[[i]] <- mean((Y_test_fold - predictions)^2)
+    }
+    
+    # Store MSE values for all folds with current lambda
+    alpha_results[[paste("Lambda", lambda)]] <- fold_metrics
+  }
+  
+  # Return results for current alpha
+  list(alpha = alpha, Results = alpha_results)
+}
+
+# Shut down parallel backend
+stopCluster(cl)
+
+
+print(results)
+
+```
+
+```{r - testy wyników CV}
+for (i in 1:10) {
+  print(results[i]$alpha)
+}
+
+print(results[6]$Results$`Lambda 0.1`[[1]])
+
+print(results[1])
+
+```
+
+
+```{r wyniki CV}
+# Initialize a data frame to store the averaged MSE along with corresponding alpha and lambda
+mse_summary <- data.frame(alpha = numeric(), lambda = numeric(), avg_MSE = numeric())
+
+# Loop through the results, handling the structure described
+for (i in seq(1, length(results), by = 2)) {
+    alpha_value <- results[[i]]
+    lambda_results <- results[[i + 1]]  # This should be the 'Results' list for the current alpha
+
+    # Process each lambda result
+    for (lambda_name in names(lambda_results)) {
+        lambda_value <- as.numeric(sub("Lambda ", "", lambda_name))  # Extract the numeric lambda value
+        mse_values <- unlist(lambda_results[[lambda_name]])  # Collect all MSE values for this lambda
+        
+        # Compute average MSE
+        avg_mse <- mean(mse_values)
+        
+        # Append to the summary dataframe
+        mse_summary <- rbind(mse_summary, data.frame(alpha = alpha_value, lambda = lambda_value, avg_MSE = avg_mse))
+    }
+}
+
+# Print the dataframe to verify correct aggregation
+print(head(mse_summary))
+
+# Identify the combination with the lowest average MSE
+min_mse_row <- mse_summary[which.min(mse_summary$avg_MSE), ]
+
+# Display the optimal alpha, lambda, and their corresponding MSE
+print(min_mse_row)
+```
+
+### C) Wykresy skrzypcowe dla MSE
+
+
+```{r przygotowanie danych przed rysowaniem wykresu}
+# Initialize a data frame to store the averaged MSE along with corresponding alpha and lambda
+mse_all <- data.frame(alpha = numeric(), lambda = numeric(), MSE = numeric())
+
+# Loop through the results, handling the structure described
+for (i in seq(1, length(results), by = 2)) {
+    alpha_value <- results[[i]]
+    lambda_results <- results[[i + 1]]  # This should be the 'Results' list for the current alpha
+
+    # Process each lambda result
+    for (lambda_name in names(lambda_results)) {
+        lambda_value <- as.numeric(sub("Lambda ", "", lambda_name))  # Extract the numeric lambda value
+        mse_values <- unlist(lambda_results[[lambda_name]])  # Collect all MSE values for this lambda
+        
+        # Append to the summary dataframe
+        for (mse in mse_values) {
+            mse_all <- rbind(mse_all, data.frame(alpha = alpha_value, lambda = lambda_value, MSE = mse))
+        }
+    }
+}
+
+# Print the dataframe to verify correct aggregation
+print(head(mse_all))
+
+mse_plot <- mse_all %>%
+  mutate(alpha_lambda = paste("λ =", format(round(lambda, 3), nsmall = 3)))
+```
+
+```{r wykresy skrzypcowe, fig.width=15, fig.height=6}
+# Unique alpha values
+unique_alphas <- unique(mse_plot$alpha)
+
+# Create and save plots
+plots <- list()
+for (alpha in unique_alphas) {
+  data_subset <- mse_plot[mse_plot$alpha == alpha, ]
+  
+  p <- ggplot(data_subset, aes(x = alpha_lambda, y = MSE)) +
+    geom_violin(trim = FALSE, fill = "lightblue", color = "darkblue") +
+    geom_point(position = position_jitter(width = 0.2), size = 1.0, alpha = 0.6) +
+    labs(title = paste("Distribution of MSE for Alpha =", alpha),
+         x = "",
+         y = "Mean Squared Error (MSE)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.title = element_text(size = 14, face = "bold"),
+          legend.position = "none")  # Remove legend
+  
+  # Store the plot in a list
+  plots[[paste("Alpha", alpha)]] <- p
+}
+
+# To display a specific plot, for example for alpha = 0.1
+print(plots[["Alpha 0.5"]])
+
+
+```
+
+### D) Błąd treningowy i walidacyjny dla optymalnych hiperparametrów
+
+
+```{r }
+print(min_mse_row)
+# Fit ElasticNet model
+
 
 ```
 
