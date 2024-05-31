@@ -2,13 +2,18 @@
 title: "Part 1"
 author: "Karol Szwed"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+    html_document:
+        toc: true
+        toc_depth: 3  # Adjust depth according to how deep headers should be included
 ---
 
 ```{r setup, include=FALSE}
 library(knitr)
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(eval = FALSE)
+
 
 library(ggplot2)
 library(reshape2)
@@ -21,15 +26,15 @@ library(foreach)
 library(doParallel)
 ```
 
-## Eksploracja danych
+# Eksploracja danych
 
-```{r wczytywanie danych}
+```{r wczytywanie danych, eval=TRUE}
 X_test <- read.csv("X_test.csv")
 X_train <- read.csv("X_train.csv")
 Y_train <- read.csv("y_train.csv")
 ```
 
-### A) Rozmiar danych i typ zmiennych
+## $a)$ Rozmiar danych i typ zmiennych
 
 Widzimy, że dane treningowe składają się z $6800$ obserwacji i $9000$ zmiennych objaśniających. Dane testowe składają się z $1200$ obserwacji i $9000$ zmiennych objaśniających. Zmienna objaśniana (białko $CD36$) jest jednowymiarowa. Wszystkie zmienne są typu 'double', co jest zgodne z oczekiwaniami. Tym samym nie dokonujemy konwersji typów zmiennych. Nie ma braków danych.
 
@@ -56,7 +61,7 @@ print(any(sapply(X_train, is.na)))
 print(any(sapply(Y_train, is.na)))
 ```
 
-### B) Rozkład zmiennej objaśnianej
+## $b)$ Rozkład zmiennej objaśnianej
 
 Zmienna objaśniana (białko $CD36$) jest zmienną ciągłą. Na histogramie widać, że dla wartości mniejszych od $0.5$ występuje duża liczba obserwacji. Wykres kwantylowy pokazuje, że rozkład zmiennej objaśnianej jest zbliżony do rozkładu normalnego, z wyjątkiem wartości skrajnie małych.
 
@@ -71,7 +76,7 @@ ggplot(data = Y_train, aes(x = CD36)) + geom_histogram(color="black", fill="whit
 ggplot(data = Y_train) + geom_qq(aes(sample = CD36), size=1.5, color="red")
 
 ```
-### C) Korelacja zmiennych
+## $c)$ Korelacja zmiennych
 
 Obrazujemy korelację zmiennych na mapie ciepła. Wybieramy $250$ zmiennych o największej korelacji z zmienną objaśnianą. Widać, że niektóre zmienne są ze sobą mocno skorelowane.
 
@@ -96,7 +101,7 @@ Var.heatmap <- ggplot(data = cor_relations, mapping = aes(x = Var1,
 print(Var.heatmap)
 ```
 
-## Testy statystyczne
+# Testy statystyczne
 
 
 ```{r Punkt 2 - WIP}
@@ -124,9 +129,9 @@ most_cleared <- most_normalized[most_correlated > 0.2]
 ks.test(most_cleared, "pnorm")
 ```
 
-## ElasticNet
+# ElasticNet
 
-### A) Opis modelu ElasticNet
+## $a)$ Opis modelu ElasticNet
 
 _ElasticNet_ jest metodą regularyzowanej regresji, która liniowo łączy w sobie dwa rodzaje regularyzacji: $\ell_1$ (_LASSO_) i $\ell_2$ (_Ridge_). Regularyzacja $\ell_1$ redukuje współczynniki modelu do zera, co pozwala na selekcję zmiennych. Regularyzacja $\ell_2$ z kolei zmniejsza wartości współczynników, ale nie redukuje ich do zera. Dzięki temu model _ElasticNet_ łączy w sobie zalety obu metod, co pozwala na selekcję zmiennych oraz zmniejszenie wariancji modelu.
 
@@ -138,16 +143,17 @@ Model ten minimalizuje następującą funkcję straty:
 $$ \underset{\beta}{\min} \left\{ \frac{1}{2n} \sum_{i=1}^n (y_i - X_i \beta)^2 + \lambda \left( \alpha \sum_{j=1}^p |\beta_j| + \frac{1}{2} (1 - \alpha) \sum_{j=1}^p \beta_j^2 \right) \right\} $$
 
 gdzie:
+
 - $n$ - liczba obserwacji.
 - $y_i$ - zmienna objaśniana.
 - $X_i$ - wektor zmiennych objaśniających.
 - $\beta$ - wektor współczynników.
 - $\lambda$ - parametr regularyzacji.
-- $\alpha$ - parametr mieszający, gdzie $ 0 \leq \alpha \leq 1 $.
+- $\alpha$ - parametr mieszający, gdzie $0 \leq \alpha \leq 1$.
 
 Dla $\alpha = 0$, _ElasticNet_ odpowiada regresji grzbietowej, a dla $\alpha = 1$, model odpowiada regresji _LASSO_.
 
-### B) Tuning hiperparametrów
+## $b)$ Tuning hiperparametrów
 
 Definiujemy funkcję, która tworzy zadaną liczbę foldów w zbiorze danych przekazanym jako argument.
 
@@ -170,61 +176,7 @@ create_folds <- function(data, k = 10) {
 }
 ```
 
-Chcemy zminimalizować prawdopodobieństwo, że w danym foldzie duża część wartości $y_i$ jest równa $0$ lub jest blisko zera. Stąd dzielimy dane na $5$ foldów.
-
-```{r - tuning hiperparametrów - STARA WERSJA}
-
-# Foldy do walidacji krzyżowej
-folds <- create_folds(X_train, k = 10)
-
-# Siatka hiperparametrów
-alphas <- c(0, 0.1, 0.5, 0.9, 1)  # 0 dla Ridge, 1 dla Lasso
-lambdas <- 10^seq(1, -2, length = 10)  # od 10 do 0.01
-
-# Pusta lista do zapisania wyników CV
-results <- list()
-
-# Przechodzimy przez wszystkie kombinacje hiperparametrów
-for (alpha in alphas) {
-  for (lambda in lambdas) {
-    fold_metrics <- numeric(length(folds))
-    
-    for (i in seq_along(folds)) {
-      fold <- folds[[i]]
-      
-      # Indeksy treningowe i testowe
-      train_indices <- fold$train
-      test_indices <- fold$test
-      
-      # Dzielimy dane
-      X_train_fold <- as.matrix(X_train[train_indices, , drop = FALSE])
-      Y_train_fold <- Y_train[train_indices, ]
-      X_test_fold <- as.matrix(X_train[test_indices, , drop = FALSE])
-      Y_test_fold <- Y_train[test_indices, ]
-      
-      # Tworzymy model ElasticNet
-      model <- glmnet(X_train_fold, Y_train_fold, alpha = alpha, lambda = lambda, trace.it = TRUE)
-      
-      # Predykcje dla zbioru testowego
-      predictions <- predict(model, s = lambda, newx = X_test_fold)
-      
-      # MSE dla foldu testowego
-      fold_metrics[i] <- mean((Y_test_fold - predictions)^2)
-    }
-    
-    # Zapisujemy wynik
-    results[[paste("Alpha", alpha, "Lambda", lambda)]] <- mean(fold_metrics)
-  }
-}
-
-print(results)
-
-# Wybieramy najlepsze hiperparametry
-best_params <- which.min(unlist(results))
-results[best_params]
-
-```
-
+Chcemy zminimalizować prawdopodobieństwo, że w danym foldzie duża część wartości $y_i$ jest równa $0$ lub jest blisko zera. Stąd dzielimy dane na $10$ foldów.
 
 ```{r - tuning wielowątkowo}
 # Ustawiamy liczbę rdzeni
@@ -239,7 +191,7 @@ folds <- create_folds(X_train, k = 10)
 alphas <- c(0, 0.1, 0.5, 0.9, 1)  # 0 dla Ridge, 1 dla Lasso
 lambdas <- 10^seq(1, -2, length = 10)  # od 10 do 0.01
 
-# Run cross-validation in parallel
+# Walidacja krzyżowa działająca wielowątkowo
 results <- foreach(alpha = alphas, .combine = 'c', .packages = 'glmnet') %dopar% {
   alpha_results <- list()
   
@@ -249,40 +201,35 @@ results <- foreach(alpha = alphas, .combine = 'c', .packages = 'glmnet') %dopar%
     for (i in seq_along(folds)) {
       fold <- folds[[i]]
       
-      # Training and testing indices
       train_indices <- fold$train
       test_indices <- fold$test
       
-      # Split data
+      # Dzielimy dane na foldy
       X_train_fold <- as.matrix(X_train[train_indices, , drop = FALSE])
       Y_train_fold <- Y_train[train_indices, ]
       X_test_fold <- as.matrix(X_train[test_indices, , drop = FALSE])
       Y_test_fold <- Y_train[test_indices, ]
       
-      # Fit ElasticNet model
+      # Dopasowujemy model ElasticNet
       model <- glmnet(X_train_fold, Y_train_fold, alpha = alpha, lambda = lambda)
       
-      # Predictions for the test set
+      # Predykcje dla zbioru testowego
       predictions <- predict(model, s = lambda, newx = X_test_fold)
       
-      # MSE for the test fold
+      # MSE dla foldu testowego
       fold_metrics[[i]] <- mean((Y_test_fold - predictions)^2)
     }
     
-    # Store MSE values for all folds with current lambda
+    # Zapisujemy wartość MSE dla wszystkich foldów dla danej wartości 'lambda'
     alpha_results[[paste("Lambda", lambda)]] <- fold_metrics
   }
   
-  # Return results for current alpha
+  # Zwracamy rezultat dla danego 'alpha'
   list(alpha = alpha, Results = alpha_results)
 }
 
-# Shut down parallel backend
+# Zamykamy backend wielowątkowy
 stopCluster(cl)
-
-
-print(results)
-
 ```
 
 ```{r - testy wyników CV}
@@ -329,7 +276,7 @@ min_mse_row <- mse_summary[which.min(mse_summary$avg_MSE), ]
 print(min_mse_row)
 ```
 
-### C) Wykresy skrzypcowe dla MSE
+## $c)$ Wykresy skrzypcowe dla MSE
 
 
 ```{r przygotowanie danych przed rysowaniem wykresu}
@@ -390,7 +337,7 @@ print(plots[["Alpha 0.5"]])
 
 ```
 
-### D) Błąd treningowy i walidacyjny dla optymalnych hiperparametrów
+## $d)$ Błąd treningowy i walidacyjny dla optymalnych hiperparametrów
 
 
 ```{r }
@@ -400,9 +347,9 @@ print(min_mse_row)
 
 ```
 
-## Lasy losowe
+# Lasy losowe
 
-```{r hiperparameter grid}
+```{r hiperparameter grid, eval=TRUE}
 num_trees <- c(100, 200, 300, 400)  # Liczba drzew
 max_depth <- c(10, 20, 30, 40)  # Maksymalna głębokość każdego drzewa
 mtry_default <- round(sqrt(ncol(X_train)))  # Domyślna wartość 'mtry' to sqrt(liczba zmiennych)
@@ -411,7 +358,7 @@ mtry_values <- c(50, mtry_default, 150, 200)
 ```
 
 
-```{r ranger random forest - CV, cache=TRUE}
+```{r ranger random forest - CV, eval=FALSE}
 num_rows <- length(num_trees) * length(max_depth) * length(mtry_values) * length(folds)
 # Wyniki CV
 results_df <- data.frame(
@@ -467,7 +414,7 @@ for (trees in num_trees) {
 ```
 Oglądamy przykładowe wyniki walidacji krzyżowej oraz zapisujemy je w pliku CSV dla późniejszego wykorzystania.
 
-```{r test wyników CV}
+```{r test wyników CV, eval=FALSE}
 head(results_df)
 
 write.csv(results_df, "random_forest_cv_results.csv", row.names = FALSE)
@@ -476,41 +423,51 @@ write.csv(results_df, "random_forest_cv_results.csv", row.names = FALSE)
 Znajdujemy najlepszy zestaw hiperparametrów na podstawie walidacji krzyżowej.
 
 ```{r najlepsze hiperparametry z CV}
+# Obliczamy średnie MSE po wszystkich foldach testowych dla danego zestawu parametrów.
 average_mse <- results_df %>%
     group_by(num_trees, depth, mtry) %>%
     summarise(avg_MSE = mean(MSE), .groups = 'drop')
-
-head(average_mse)
 
 best_row <- which.min(average_mse$avg_MSE)
 print(average_mse[best_row, ])
 ```
 
-### C) Wykres skrzypcowy
+## $c)$ Wykres skrzypcowy
 
-```{r box plot - random forest}
+Dla poprawy czytelności wykresu pudełkowego zostały stworzone $4$ oddzielne wykresy - każdy wykres zawiera stałą liczbę drzew, zmienne są parametry głębokości drzewa oraz _mtry_.
+
+Dodatkowo, na każdym wykresie pudełka są pokolorowane ze względu na parametr głębokości drzewa (_depth_).
+
+```{r box plot - random forest, eval=TRUE, cache=TRUE}
+results_df <- readr::read_csv("random_forest_cv_results.csv")
+
 box_plots <- list()
 for (number_of_trees in num_trees) {
-  # Filtrujemy dane, aby wybrać właściwy podzbiór dla danej liczby drzew
+  # Filtrujemy dane ze względu na liczbę drzew
   data_subset <- results_df[results_df$num_trees == number_of_trees, ]
   
   # Tworzymy wykres pudełkowy dla danej liczby drzew
-  p <- ggplot(data_subset, aes(x = factor(paste("Depth", depth, "Mtry", mtry)), y = MSE)) +
-    geom_boxplot(fill = "lightblue", color = "darkblue") +
+  p <- ggplot(data_subset, aes(x = factor(paste("Depth", depth, "Mtry", mtry)), y = MSE, fill = factor(depth))) +
+    geom_boxplot() +
     geom_jitter(color = "darkred", size = 1.0, width = 0.2, alpha = 0.6) +
+    scale_fill_brewer(palette = "Set1", name = "Tree depth") +
     labs(title = paste("Distribution of MSE for num_trees =", number_of_trees),
          x = "Hyperparameter Combinations (Depth & Mtry)",
          y = "Mean Squared Error (MSE)") +
     theme_minimal() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
           plot.title = element_text(size = 14, face = "bold"),
-          legend.position = "none")
+          legend.position = "right")
   
   # Wykresy tworzą listę, gdzie liczba drzew służy jako klucz
   box_plots[[number_of_trees]] <- p
 }
 
-print(box_plots[[300]])  # Liczba drzew jest kluczem w liście wykresów
+# Liczba drzew jest kluczem w liście wykresów
+print(box_plots[[100]])
+print(box_plots[[200]])
+print(box_plots[[300]])
+print(box_plots[[400]])
 ```
 
 
