@@ -26,7 +26,7 @@ library(foreach)
 library(doParallel)
 ```
 
-# Eksploracja danych
+# 1. Eksploracja danych
 
 ```{r wczytywanie danych, eval=TRUE}
 X_test <- read.csv("X_test.csv")
@@ -101,7 +101,7 @@ Var.heatmap <- ggplot(data = cor_relations, mapping = aes(x = Var1,
 print(Var.heatmap)
 ```
 
-# Testy statystyczne
+# 2. Testy statystyczne
 
 
 ```{r Punkt 2 - WIP}
@@ -129,7 +129,7 @@ most_cleared <- most_normalized[most_correlated > 0.2]
 ks.test(most_cleared, "pnorm")
 ```
 
-# ElasticNet
+# 3. ElasticNet
 
 ## $a)$ Opis modelu ElasticNet
 
@@ -347,7 +347,13 @@ print(min_mse_row)
 
 ```
 
-# Lasy losowe
+# 4. Lasy losowe
+
+W tej części projektu trenujemy model lasów losowych.
+
+## $a)$ Walidacja krzyżowa
+
+Zdefiniujmy najpierw siatkę hiperparametrów. W tym projekcie wybrałem liczbę drzew (_num\_trees_), maksymalną głębokość każdego drzewa (_max\_depth_) oraz _mtry_.
 
 ```{r hiperparameter grid, eval=TRUE}
 num_trees <- c(100, 200, 300, 400)  # Liczba drzew
@@ -357,6 +363,7 @@ mtry_default <- round(sqrt(ncol(X_train)))  # Domyślna wartość 'mtry' to sqrt
 mtry_values <- c(50, mtry_default, 150, 200)
 ```
 
+Wykonajmy teraz walidację krzyżową.
 
 ```{r ranger random forest - CV, eval=FALSE}
 num_rows <- length(num_trees) * length(max_depth) * length(mtry_values) * length(folds)
@@ -412,6 +419,7 @@ for (trees in num_trees) {
   }
 }
 ```
+
 Oglądamy przykładowe wyniki walidacji krzyżowej oraz zapisujemy je w pliku CSV dla późniejszego wykorzystania.
 
 ```{r test wyników CV, eval=FALSE}
@@ -432,7 +440,7 @@ best_row <- which.min(average_mse$avg_MSE)
 print(average_mse[best_row, ])
 ```
 
-## $c)$ Wykres skrzypcowy
+## $b)$ Wykres pudełkowy
 
 Dla poprawy czytelności wykresu pudełkowego zostały stworzone $4$ oddzielne wykresy - każdy wykres zawiera stałą liczbę drzew, zmienne są parametry głębokości drzewa oraz _mtry_.
 
@@ -469,5 +477,130 @@ print(box_plots[[200]])
 print(box_plots[[300]])
 print(box_plots[[400]])
 ```
+
+## $c)$ Błąd treningowy i walidacyjny dla wybranych wartości hiperparametrów
+
+```{r optymalne parametry oraz inicjalizacja}
+print(average_mse[best_row, ])
+
+best_num_trees <- average_mse[best_row, ]$num_trees
+best_depth <- average_mse[best_row, ]$depth
+best_mtry <- average_mse[best_row, ]$mtry
+
+sum_mse_train <- 0
+sum_mse_test <- 0
+fold_count <- length(folds)
+```
+
+```{r pełny model dla optymalnych parametrów, cache=TRUE}
+for (i in seq_along(folds)) {
+    fold <- folds[[i]]
+        
+    train_indices <- fold$train
+    test_indices <- fold$test
+        
+    # Dzielimy dane na foldy
+    X_train_fold <- as.matrix(X_train[train_indices, , drop = FALSE])
+    Y_train_fold <- Y_train[train_indices, ]
+    X_test_fold <- as.matrix(X_train[test_indices, , drop = FALSE])
+    Y_test_fold <- Y_train[test_indices, ]
+        
+    # Dopasowujemy las losowy
+    model <- ranger(
+        formula         = Y ~ .,      
+        data            = data.frame(Y = Y_train_fold, X_train_fold),
+        num.trees       = best_num_trees,
+        mtry            = best_mtry,
+        max.depth       = best_depth,
+        seed            = 1000,         # Dla powtarzalności
+        verbose         = TRUE,         # Postępy obliczeń
+        num.threads     = 7
+    )
+        
+    # Predykcje dla zbioru treningowego i testowego
+    train_predictions <- predict(model, data.frame(X_train_fold))$predictions
+    test_predictions <- predict(model, data.frame(X_test_fold))$predictions
+    
+    # Obliczamy MSE dla zbioru treningowego i testowego
+    mse_train <- mean((Y_train_fold - train_predictions)^2)
+    mse_test <- mean((Y_test_fold - test_predictions)^2)
+    
+    sum_mse_train <- sum_mse_train + mse_train
+    sum_mse_test <- sum_mse_test + mse_test
+}
+```
+
+
+```{r błędy dla pełnego modelu}
+# Obliczamy MSE uśrednionego po wszystkich foldach
+avg_mse_train <- sum_mse_train / fold_count
+avg_mse_test <- sum_mse_test / fold_count
+
+cat("Average Training MSE:", avg_mse_train, "\n")
+cat("Average Validation MSE:", avg_mse_test)
+
+```
+
+Otrzymaliśmy błąd treningowy na poziomie ok. 0.035 oraz błąd walidacyjny na poziomie  ok. 0.193
+Widzimy, że błąd treningowy jest istotnie mniejszy od błędy walidacyjnego, co może sugerować pewne przeuczenie modelu.
+
+# 5. Podsumowanie
+
+Najpierw dopasujmy prosty model referencyjny, który dowolnym wartościom zmiennych objaśniających w foldzie testowym przypisuje średnią arytmetyczną
+zmiennej objaśnianej policzoną w foldach treningowych.
+
+```{r model referencyjny}
+sum_mse_train_ref <- 0
+sum_mse_test_ref <- 0
+fold_count <- length(folds)
+
+for (i in seq_along(folds)) {
+    fold <- folds[[i]]
+        
+    train_indices <- fold$train
+    test_indices <- fold$test
+        
+    # Dzielimy dane na foldy
+    X_train_fold <- as.matrix(X_train[train_indices, , drop = FALSE])
+    Y_train_fold <- Y_train[train_indices, ]
+    X_test_fold <- as.matrix(X_train[test_indices, , drop = FALSE])
+    Y_test_fold <- Y_train[test_indices, ]
+        
+    # Dopasowujemy nasz model referencyjny
+    y_train_avg <- mean(Y_train_fold)
+        
+    # Predykcje dla zbioru treningowego i testowego
+    train_predictions <- rep(y_train_avg, length(Y_train_fold))
+    test_predictions <- rep(y_train_avg, length(Y_test_fold))
+    
+    # Obliczamy MSE dla zbioru treningowego i testowego
+    mse_train <- mean((Y_train_fold - train_predictions)^2)
+    mse_test <- mean((Y_test_fold - test_predictions)^2)
+    
+    sum_mse_train_ref <- sum_mse_train_ref + mse_train
+    sum_mse_test_ref <- sum_mse_test_ref + mse_test
+}
+```
+
+
+```{r wyniki CV dla modelu referencyjnego}
+# Obliczamy MSE uśrednionego po wszystkich foldach
+avg_mse_train_ref <- sum_mse_train_ref / fold_count
+avg_mse_test_ref <- sum_mse_test_ref / fold_count
+
+cat("Average Training MSE for Reference Model:", avg_mse_train_ref, "\n")
+cat("Average Validation MSE for Reference Model:", avg_mse_test_ref, "\n")
+```
+
+Błąd średniokwadratowy walidacyjny oraz treningowy modelu referencyjnego są bardzo zbliżone do siebie, jednak o wiele gorsze od wartości uzyskanych dla modeli _ElasticNet_ oraz lasów losowych.
+
+```{r tabela podsumowująca wyniki CV dla wszystkich modeli}
+# TODO
+
+```
+
+Uważam, że przy uzyskanych wynikach najlepszy model to _ElasticNet_ z uwagi na zbliżone wartości $MSE$ do modelu lasów losowych. Dodatkowo model _ElasticNet_ jest o wiele
+mniej wymagający obliczeniowo oraz jest łatwiej wyjaśnialny. Lasy losowe prawdopodobnie poradziły by sobie lepiej dla poszerzonej siatki hiperparametrów
+przeszukiwanych podczas walidacji krzyżowej.
 
 
