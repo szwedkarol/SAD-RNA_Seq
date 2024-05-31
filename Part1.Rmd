@@ -411,7 +411,7 @@ mtry_values <- c(50, mtry_default, 150, 200)
 ```
 
 
-```{r ranger random forest - CV}
+```{r ranger random forest - CV, cache=TRUE}
 num_rows <- length(num_trees) * length(max_depth) * length(mtry_values) * length(folds)
 # Wyniki CV
 results_df <- data.frame(
@@ -429,17 +429,16 @@ for (trees in num_trees) {
       for (i in seq_along(folds)) {
         fold <- folds[[i]]
         
-        # Training and testing indices
         train_indices <- fold$train
         test_indices <- fold$test
         
-        # Split data
+        # Dzielimy dane na foldy
         X_train_fold <- as.matrix(X_train[train_indices, , drop = FALSE])
         Y_train_fold <- Y_train[train_indices, ]
         X_test_fold <- as.matrix(X_train[test_indices, , drop = FALSE])
         Y_test_fold <- Y_train[test_indices, ]
         
-        # Fit the ranger model
+        # Dopasowujemy las losowy
         model <- ranger(
           formula         = Y ~ .,
           data            = data.frame(Y = Y_train_fold, X_train_fold),
@@ -447,17 +446,17 @@ for (trees in num_trees) {
           mtry            = mtry,
           max.depth       = depth,
           seed            = 1000,         # Dla powtarzalności
-          verbose         = TRUE,  # Postępy obliczeń
+          verbose         = TRUE,         # Postępy obliczeń
           num.threads     = 7
         )
         
-        # Predictions for the test set
+        # Predykcje dla zbioru testowego
         predictions <- predict(model, data.frame(X_test_fold))$predictions
         
-        # Calculate MSE for the test fold
+        # Obliczamy MSE dla foldu testowego
         mse_value <- mean((Y_test_fold - predictions)^2)
 
-        # Store results in the preallocated dataframe
+        # Wyniki zapisujemy we wcześniej zdefiniowanej ramce danych
         results_df[counter, ] <- c(i, trees, depth, mtry, mse_value)
         counter <- counter + 1
         print(counter)
@@ -466,7 +465,7 @@ for (trees in num_trees) {
   }
 }
 ```
-
+Oglądamy przykładowe wyniki walidacji krzyżowej oraz zapisujemy je w pliku CSV dla późniejszego wykorzystania.
 
 ```{r test wyników CV}
 head(results_df)
@@ -474,6 +473,7 @@ head(results_df)
 write.csv(results_df, "random_forest_cv_results.csv", row.names = FALSE)
 ```
 
+Znajdujemy najlepszy zestaw hiperparametrów na podstawie walidacji krzyżowej.
 
 ```{r najlepsze hiperparametry z CV}
 average_mse <- results_df %>%
@@ -488,32 +488,29 @@ print(average_mse[best_row, ])
 
 ### C) Wykres skrzypcowy
 
-```{r violin plot - random forest}
+```{r box plot - random forest}
 box_plots <- list()
 for (number_of_trees in num_trees) {
-  # Filter the data for the current number of trees
+  # Filtrujemy dane, aby wybrać właściwy podzbiór dla danej liczby drzew
   data_subset <- results_df[results_df$num_trees == number_of_trees, ]
   
-  # Create the box plot for the current number of trees
+  # Tworzymy wykres pudełkowy dla danej liczby drzew
   p <- ggplot(data_subset, aes(x = factor(paste("Depth", depth, "Mtry", mtry)), y = MSE)) +
-    geom_boxplot(fill = "lightblue", color = "darkblue") +  # Create box plots
-    geom_jitter(color = "darkred", size = 1.0, width = 0.2, alpha = 0.6) +  # Overlay points
+    geom_boxplot(fill = "lightblue", color = "darkblue") +
+    geom_jitter(color = "darkred", size = 1.0, width = 0.2, alpha = 0.6) +
     labs(title = paste("Distribution of MSE for num_trees =", number_of_trees),
          x = "Hyperparameter Combinations (Depth & Mtry)",
          y = "Mean Squared Error (MSE)") +
     theme_minimal() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
           plot.title = element_text(size = 14, face = "bold"),
-          legend.position = "none")  # Remove legend
+          legend.position = "none")
   
-  # Store the plot in a list, using the number of trees as the key
+  # Wykresy tworzą listę, gdzie liczba drzew służy jako klucz
   box_plots[[number_of_trees]] <- p
 }
 
-print(box_plots[[300]])
-
-
-
+print(box_plots[[300]])  # Liczba drzew jest kluczem w liście wykresów
 ```
 
 
