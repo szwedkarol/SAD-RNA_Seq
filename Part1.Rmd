@@ -486,4 +486,34 @@ best_row <- which.min(average_mse$avg_MSE)
 print(average_mse[best_row, ])
 ```
 
+### C) Wykres skrzypcowy
+
+```{r violin plot - random forest}
+box_plots <- list()
+for (number_of_trees in num_trees) {
+  # Filter the data for the current number of trees
+  data_subset <- results_df[results_df$num_trees == number_of_trees, ]
+  
+  # Create the box plot for the current number of trees
+  p <- ggplot(data_subset, aes(x = factor(paste("Depth", depth, "Mtry", mtry)), y = MSE)) +
+    geom_boxplot(fill = "lightblue", color = "darkblue") +  # Create box plots
+    geom_jitter(color = "darkred", size = 1.0, width = 0.2, alpha = 0.6) +  # Overlay points
+    labs(title = paste("Distribution of MSE for num_trees =", number_of_trees),
+         x = "Hyperparameter Combinations (Depth & Mtry)",
+         y = "Mean Squared Error (MSE)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+          plot.title = element_text(size = 14, face = "bold"),
+          legend.position = "none")  # Remove legend
+  
+  # Store the plot in a list, using the number of trees as the key
+  box_plots[[number_of_trees]] <- p
+}
+
+print(box_plots[[300]])
+
+
+
+```
+
 
