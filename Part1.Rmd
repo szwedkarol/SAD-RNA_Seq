@@ -15,6 +15,7 @@ library(reshape2)
 library(caret)
 library(dplyr)
 library(glmnet)
+library(ranger)
 
 library(foreach)
 library(doParallel)
@@ -171,7 +172,7 @@ create_folds <- function(data, k = 10) {
 
 Chcemy zminimalizować prawdopodobieństwo, że w danym foldzie duża część wartości $y_i$ jest równa $0$ lub jest blisko zera. Stąd dzielimy dane na $5$ foldów.
 
-```{r - tuning hiperparametrów}
+```{r - tuning hiperparametrów - STARA WERSJA}
 
 # Foldy do walidacji krzyżowej
 folds <- create_folds(X_train, k = 10)
@@ -397,6 +398,92 @@ print(min_mse_row)
 # Fit ElasticNet model
 
 
+```
+
+## Lasy losowe
+
+```{r hiperparameter grid}
+num_trees <- c(100, 200, 300, 400)  # Liczba drzew
+max_depth <- c(10, 20, 30, 40)  # Maksymalna głębokość każdego drzewa
+mtry_default <- round(sqrt(ncol(X_train)))  # Domyślna wartość 'mtry' to sqrt(liczba zmiennych)
+
+mtry_values <- c(50, mtry_default, 150, 200)
+```
+
+
+```{r ranger random forest - CV}
+num_rows <- length(num_trees) * length(max_depth) * length(mtry_values) * length(folds)
+# Wyniki CV
+results_df <- data.frame(
+  fold_i = integer(num_rows),
+  num_trees = integer(num_rows),
+  depth = integer(num_rows),
+  mtry = integer(num_rows),
+  MSE = numeric(num_rows)
+)
+
+counter <- 1
+for (trees in num_trees) {
+  for (depth in max_depth) {
+    for (mtry in mtry_values) {
+      for (i in seq_along(folds)) {
+        fold <- folds[[i]]
+        
+        # Training and testing indices
+        train_indices <- fold$train
+        test_indices <- fold$test
+        
+        # Split data
+        X_train_fold <- as.matrix(X_train[train_indices, , drop = FALSE])
+        Y_train_fold <- Y_train[train_indices, ]
+        X_test_fold <- as.matrix(X_train[test_indices, , drop = FALSE])
+        Y_test_fold <- Y_train[test_indices, ]
+        
+        # Fit the ranger model
+        model <- ranger(
+          formula         = Y ~ .,
+          data            = data.frame(Y = Y_train_fold, X_train_fold),
+          num.trees       = trees,
+          mtry            = mtry,
+          max.depth       = depth,
+          seed            = 1000,         # Dla powtarzalności
+          verbose         = TRUE,  # Postępy obliczeń
+          num.threads     = 7
+        )
+        
+        # Predictions for the test set
+        predictions <- predict(model, data.frame(X_test_fold))$predictions
+        
+        # Calculate MSE for the test fold
+        mse_value <- mean((Y_test_fold - predictions)^2)
+
+        # Store results in the preallocated dataframe
+        results_df[counter, ] <- c(i, trees, depth, mtry, mse_value)
+        counter <- counter + 1
+        print(counter)
+      }
+    }
+  }
+}
+```
+
+
+```{r test wyników CV}
+head(results_df)
+
+write.csv(results_df, "random_forest_cv_results.csv", row.names = FALSE)
+```
+
+
+```{r najlepsze hiperparametry z CV}
+average_mse <- results_df %>%
+    group_by(num_trees, depth, mtry) %>%
+    summarise(avg_MSE = mean(MSE), .groups = 'drop')
+
+head(average_mse)
+
+best_row <- which.min(average_mse$avg_MSE)
+print(average_mse[best_row, ])
 ```
 
 
