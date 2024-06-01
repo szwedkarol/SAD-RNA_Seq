@@ -38,7 +38,7 @@ Y_train <- read.csv("y_train.csv")
 
 Widzimy, że dane treningowe składają się z $6800$ obserwacji i $9000$ zmiennych objaśniających. Dane testowe składają się z $1200$ obserwacji i $9000$ zmiennych objaśniających. Zmienna objaśniana (białko $CD36$) jest jednowymiarowa. Wszystkie zmienne są typu 'double', co jest zgodne z oczekiwaniami. Tym samym nie dokonujemy konwersji typów zmiennych. Nie ma braków danych.
 
-```{r podstawowa eksploracja danych}
+```{r podstawowa eksploracja danych, eval=TRUE}
 print("Dane treningowe - RNA")
 print(dim(X_train))
 
@@ -49,12 +49,14 @@ print("Dane testowe - RNA")
 print(dim(X_test))
 ```
 
-```{r typ zmiennych i braki danych}
+```{r typ zmiennych i braki danych, eval=TRUE}
 # Typ zmiennych - wszystkie powinny być typu 'double'
+print("Czy wszystkie zmienne są typu double:")
 print(all(sapply(X_test, is.double)))
 print(all(sapply(X_train, is.double)))
 print(all(sapply(Y_train, is.double)))
 
+print("Czy są braki danych:")
 # Sprawdzenie czy są braki danych
 print(any(sapply(X_test, is.na)))
 print(any(sapply(X_train, is.na)))
@@ -65,7 +67,7 @@ print(any(sapply(Y_train, is.na)))
 
 Zmienna objaśniana (białko $CD36$) jest zmienną ciągłą. Na histogramie widać, że dla wartości mniejszych od $0.5$ występuje duża liczba obserwacji. Wykres kwantylowy pokazuje, że rozkład zmiennej objaśnianej jest zbliżony do rozkładu normalnego, z wyjątkiem wartości skrajnie małych.
 
-```{r podpunkt b - rozkład zmiennej objaśnianej}
+```{r podpunkt b - rozkład zmiennej objaśnianej, eval=TRUE}
 # Badamy rozkład zmiennej objaśnianej (dane 'Y_train')
 summary(Y_train)
 
@@ -74,13 +76,13 @@ ggplot(data = Y_train, aes(x = CD36)) + geom_histogram(color="black", fill="whit
 
 # Wykres kwantylowy
 ggplot(data = Y_train) + geom_qq(aes(sample = CD36), size=1.5, color="red")
-
 ```
+
 ## $c)$ Korelacja zmiennych
 
 Obrazujemy korelację zmiennych na mapie ciepła. Wybieramy $250$ zmiennych o największej korelacji z zmienną objaśnianą. Widać, że niektóre zmienne są ze sobą mocno skorelowane.
 
-```{r podpunkt c - korelacja zmiennych}
+```{r podpunkt c - korelacja zmiennych, eval=TRUE}
 # Korelacja zmiennych
 # Wybieramy 250 zmiennych o największej korelacji z zmienną objaśnianą
 correlated <- apply(X_train, 2, function (x) cor(x, Y_train))
@@ -98,36 +100,84 @@ Var.heatmap <- ggplot(data = cor_relations, mapping = aes(x = Var1,
   geom_tile() + scale_fill_viridis(discrete=FALSE) +
   theme(axis.text.x = element_blank(), axis.text.y = element_blank()) +
   coord_fixed()
+
 print(Var.heatmap)
 ```
 
 # 2. Testy statystyczne
 
 
-```{r Punkt 2 - WIP}
+## $a)$ Wykres kwantylowy
+
+Najpierw rysujemy wykres kwantylowy porównujący zmienną objaśnianą z rozkładem normalnym.
+
+```{r wykres kwantylowy, eval=TRUE}
 ggplot(data = Y_train) +
   geom_qq(aes(sample = CD36), size=1.5, color = "red") +
   geom_qq_line(aes(sample = CD36))
-
-
-ks.test(Y_train, "pnorm") # Test Kolmogorova-Smiernov'a
-
-
-# Wybieramy zmienne najbardziej skorelowane
-correlations <- apply(X_train, 2, function (x) cor(x, Y_train))
-most_correlated <- X_train[,order(correlations, decreasing = T)[1]]
-
-# Test statystyczny hipotezy zgodności z rozkładem
-ggplot() + aes(x = most_correlated) + 
-  geom_histogram(binwidth = 0.1, color="blue", fill="white")
-
-# Normalizacja danych
-most_normalized <- (most_correlated - mean(most_correlated)) / sd(most_correlated)
-
-ks.test(most_normalized, "pnorm") # Is it normal? It should be, except this pike in 0
-most_cleared <- most_normalized[most_correlated > 0.2]
-ks.test(most_cleared, "pnorm")
 ```
+
+Nie jesteśmy w stanie odczytać średniej z tego wykresu, natomiast kształt litery 'S' wykresu doświadczalnego (mocno spłaszczony z lewej) wskazuje na wariancję mniejszą niż
+rozkładu normalnego.
+
+## $b)$ Test hipotezy zgodności z rozkładem normalnym
+
+Przeprowadźmy test zgodności zmiennej objaśnianej z rozkładem normalnym.
+
+```{r test zgodności Y z rozkładem normalnym}
+
+
+
+
+```
+
+TODO: Komentarz
+
+## $c)$ Pozostałe testy statystyczne dla jednej zmiennej objaśniającej
+
+Na początku wybierzmy jedną zmienną objaśniającą najbardziej skorelowaną ze zmienną objaśnianą.
+
+```{r wybór najbardziej skorelowanej zmiennej, eval=TRUE}
+cor_vec <- cor(X_train, Y_train)
+max_cor_index <- which.max(cor_vec)
+most_correlated_var_name <- colnames(X_train)[max_cor_index]
+
+cat("Najbardziej skorelowaną zmienną objaśniającą jest:", most_correlated_var_name, "z korelacją: ", cor_vec[max_cor_index], "\n")
+```
+
+### $i.$ Test zgodności z rozkładem TODO
+
+### $ii.$ Test lokalizacji rozkładu w zbiorze testowym i treningowym
+
+Sprawdzimy za pomocą testu Manna-Whitney'a, czy wybrana przez nas zmienna objaśniająca ma taką samą medianę w zbiorze testowym i treningowym.
+
+$H_0$ - rozkłady zmiennej w obu zbiorach są tak samo zlokalizowane vs.
+$H_1$ - rozkłady zmiennej w obu zbiorach nie są tak samo zlokalizowane
+
+$\alpha$ - ustalamy poziom istotności na poziomie 0.05
+
+```{r qq plot, eval=TRUE}
+# Wybieramy podzbioór danych zawierający naszą najbardziej skorelowaną zmienną
+train_data <- X_train[, most_correlated_var_name]
+test_data <- X_test[, most_correlated_var_name]
+
+# Rysujemy wykres kwantylowy
+qqplot(train_data, test_data, main = paste("Q-Q Plot of the Most Correlated Variable", most_correlated_var_name),
+       xlab = "Train Quantiles", ylab = "Test Quantiles", col = "blue", pch = 1)
+
+# Dodajemy prostą nachyloną pod kątem 45 st.
+abline(0, 1, col = "red", lwd = 2)
+```
+
+Tym samym widzimy, że wybrana zmienna objaśniająca ma podobny rozkład w zbiorze testowym oraz treningowym, tym samym test Manna-Whitney'a jest poprawny.
+
+```{r test Wilcoxa, eval=TRUE}
+test_result <- wilcox.test(train_data, test_data, alternative = "two.sided")
+
+print(test_result)
+```
+
+Otrzymaliśmy $p-value < \alpha$, więc nie ma podstaw do odrzucenia hipotezy zerowej, więc rozkład wybranej zmiennej jest zlokalizowany tak samo w zbiorze testowym oraz treningowym.
 
 # 3. ElasticNet
 
