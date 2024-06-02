@@ -126,8 +126,8 @@ Przeprowadźmy test zgodności zmiennej objaśnianej z rozkładem normalnym.
 
 ```{r test zgodności Y z rozkładem normalnym}
 
-
-
+# TODO
+plot(sort(Y_train$CD36))
 
 ```
 
@@ -177,7 +177,7 @@ test_result <- wilcox.test(train_data, test_data, alternative = "two.sided")
 print(test_result)
 ```
 
-Otrzymaliśmy $p-value < \alpha$, więc nie ma podstaw do odrzucenia hipotezy zerowej, więc rozkład wybranej zmiennej jest zlokalizowany tak samo w zbiorze testowym oraz treningowym.
+Otrzymaliśmy $p\text{-value} > \alpha$, więc nie ma podstaw do odrzucenia hipotezy zerowej, więc rozkład wybranej zmiennej jest zlokalizowany tak samo w zbiorze testowym oraz treningowym.
 
 # 3. ElasticNet
 
@@ -207,7 +207,7 @@ Dla $\alpha = 0$, _ElasticNet_ odpowiada regresji grzbietowej, a dla $\alpha = 1
 
 Definiujemy funkcję, która tworzy zadaną liczbę foldów w zbiorze danych przekazanym jako argument.
 
-```{r - tworzenie foldów do walidacji krzyżowej}
+```{r - tworzenie foldów do walidacji krzyżowej, eval=TRUE}
 # Tworzy 'k' foldów do walidacji krzyżowej
 create_folds <- function(data, k = 10) {
   set.seed(123)  # Ustalamy ziarno dla powtarzalności wyników
@@ -224,6 +224,9 @@ create_folds <- function(data, k = 10) {
   # Zwracamy listę wektorów indeksów
   return(result)
 }
+
+# Foldy do walidacji krzyżowej
+folds <- create_folds(X_train, k = 10)
 ```
 
 Chcemy zminimalizować prawdopodobieństwo, że w danym foldzie duża część wartości $y_i$ jest równa $0$ lub jest blisko zera. Stąd dzielimy dane na $10$ foldów.
@@ -233,9 +236,6 @@ Chcemy zminimalizować prawdopodobieństwo, że w danym foldzie duża część w
 numCores <- parallel::detectCores() - 1
 cl <- makeCluster(numCores)
 registerDoParallel(cl)
-
-# Foldy do walidacji krzyżowej
-folds <- create_folds(X_train, k = 10)
 
 # Siatka hiperparametrów
 alphas <- c(0, 0.1, 0.5, 0.9, 1)  # 0 dla Ridge, 1 dla Lasso
@@ -282,7 +282,9 @@ results <- foreach(alpha = alphas, .combine = 'c', .packages = 'glmnet') %dopar%
 stopCluster(cl)
 ```
 
-```{r - testy wyników CV}
+```{r - testy wyników CV, include=FALSE}
+write.csv(results, "elasticNet_cv_results.csv", row.names = FALSE)
+
 for (i in 1:10) {
   print(results[i]$alpha)
 }
@@ -295,62 +297,54 @@ print(results[1])
 
 
 ```{r wyniki CV}
-# Initialize a data frame to store the averaged MSE along with corresponding alpha and lambda
+results <- readr::read_csv("elasticNet_cv_results.csv")
+
 mse_summary <- data.frame(alpha = numeric(), lambda = numeric(), avg_MSE = numeric())
 
-# Loop through the results, handling the structure described
 for (i in seq(1, length(results), by = 2)) {
     alpha_value <- results[[i]]
-    lambda_results <- results[[i + 1]]  # This should be the 'Results' list for the current alpha
+    lambda_results <- results[[i + 1]]
 
-    # Process each lambda result
     for (lambda_name in names(lambda_results)) {
-        lambda_value <- as.numeric(sub("Lambda ", "", lambda_name))  # Extract the numeric lambda value
-        mse_values <- unlist(lambda_results[[lambda_name]])  # Collect all MSE values for this lambda
+        lambda_value <- as.numeric(sub("Lambda ", "", lambda_name))
+        mse_values <- unlist(lambda_results[[lambda_name]])
         
-        # Compute average MSE
         avg_mse <- mean(mse_values)
         
-        # Append to the summary dataframe
         mse_summary <- rbind(mse_summary, data.frame(alpha = alpha_value, lambda = lambda_value, avg_MSE = avg_mse))
     }
 }
 
-# Print the dataframe to verify correct aggregation
 print(head(mse_summary))
 
-# Identify the combination with the lowest average MSE
 min_mse_row <- mse_summary[which.min(mse_summary$avg_MSE), ]
 
-# Display the optimal alpha, lambda, and their corresponding MSE
 print(min_mse_row)
 ```
 
+![Wyniki walidacji krzyżowej](Best_alpha_lambda_SAD.png)
+
 ## $c)$ Wykresy skrzypcowe dla MSE
 
+Przygotowujemy dane do rysowania wykresów skrzypcowych.
 
 ```{r przygotowanie danych przed rysowaniem wykresu}
-# Initialize a data frame to store the averaged MSE along with corresponding alpha and lambda
 mse_all <- data.frame(alpha = numeric(), lambda = numeric(), MSE = numeric())
 
-# Loop through the results, handling the structure described
 for (i in seq(1, length(results), by = 2)) {
     alpha_value <- results[[i]]
-    lambda_results <- results[[i + 1]]  # This should be the 'Results' list for the current alpha
+    lambda_results <- results[[i + 1]]
 
-    # Process each lambda result
     for (lambda_name in names(lambda_results)) {
-        lambda_value <- as.numeric(sub("Lambda ", "", lambda_name))  # Extract the numeric lambda value
-        mse_values <- unlist(lambda_results[[lambda_name]])  # Collect all MSE values for this lambda
+        lambda_value <- as.numeric(sub("Lambda ", "", lambda_name))
+        mse_values <- unlist(lambda_results[[lambda_name]])
         
-        # Append to the summary dataframe
         for (mse in mse_values) {
             mse_all <- rbind(mse_all, data.frame(alpha = alpha_value, lambda = lambda_value, MSE = mse))
         }
     }
 }
 
-# Print the dataframe to verify correct aggregation
 print(head(mse_all))
 
 mse_plot <- mse_all %>%
@@ -358,10 +352,8 @@ mse_plot <- mse_all %>%
 ```
 
 ```{r wykresy skrzypcowe, fig.width=15, fig.height=6}
-# Unique alpha values
 unique_alphas <- unique(mse_plot$alpha)
 
-# Create and save plots
 plots <- list()
 for (alpha in unique_alphas) {
   data_subset <- mse_plot[mse_plot$alpha == alpha, ]
@@ -375,26 +367,73 @@ for (alpha in unique_alphas) {
     theme_minimal() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1),
           plot.title = element_text(size = 14, face = "bold"),
-          legend.position = "none")  # Remove legend
+          legend.position = "none")
   
-  # Store the plot in a list
   plots[[paste("Alpha", alpha)]] <- p
 }
 
-# To display a specific plot, for example for alpha = 0.1
-print(plots[["Alpha 0.5"]])
-
-
+for (plot in plots)
+    print(plot)
 ```
+
+
+![Wykres skrzypcowy dla $\alpha = 0$](violin_plot_elasticNet_alpha0.png)
+
+![Wykres skrzypcowy dla $\alpha = 0.1$](violin_plot_elasticNet_alpha0-1.png)
+
+![Wykres skrzypcowy dla $\alpha = 0.5$](violin_plot_elasticNet_alpha0-5.png)
+
+![Wykres skrzypcowy dla $\alpha = 0.9$](violin_plot_elasticNet_alpha0-9.png)
+
+![Wykres skrzypcowy dla $\alpha = 1$](violin_plot_elasticNet_alpha1.png)
 
 ## $d)$ Błąd treningowy i walidacyjny dla optymalnych hiperparametrów
 
 
-```{r }
-print(min_mse_row)
-# Fit ElasticNet model
+```{r model ElasticNet dla najlepszych parametrów po CV, eval=TRUE}
+best_alpha <- 0.1
+best_lambda <- 0.1
+sum_mse_test_net <- 0
+sum_mse_train_net <- 0
+
+# Dopasowujemy model dla najlepszych wartości hiperparametrów
+for (i in seq_along(folds)) {
+      fold <- folds[[i]]
+      
+      train_indices <- fold$train
+      test_indices <- fold$test
+      
+      # Dzielimy dane na foldy
+      X_train_fold <- as.matrix(X_train[train_indices, , drop = FALSE])
+      Y_train_fold <- Y_train[train_indices, ]
+      X_test_fold <- as.matrix(X_train[test_indices, , drop = FALSE])
+      Y_test_fold <- Y_train[test_indices, ]
+      
+      # Dopasowujemy model ElasticNet
+      model <- glmnet(X_train_fold, Y_train_fold, alpha = best_alpha, lambda = best_lambda)
+     
+      # Predykcje dla zbioru treningowego i testowego
+      train_predictions <- predict(model, s = best_lambda, newx = X_train_fold)
+      test_predictions <- predict(model, s = best_lambda, newx = X_test_fold)
+    
+      # Obliczamy MSE dla zbioru treningowego i testowego
+      mse_train <- mean((Y_train_fold - train_predictions)^2)
+      mse_test <- mean((Y_test_fold - test_predictions)^2)
+    
+      sum_mse_train_net <- sum_mse_train_net + mse_train
+      sum_mse_test_net <- sum_mse_test_net + mse_test
+}
+```
 
 
+```{r błędy dla pełnego modelu, eval=TRUE}
+# Obliczamy MSE uśrednionego po wszystkich foldach
+fold_count <- length(folds)
+avg_mse_train_net <- sum_mse_train_net / fold_count
+avg_mse_test_net <- sum_mse_test_net / fold_count
+
+cat("Average Training MSE:", avg_mse_train_net, "\n")
+cat("Average Validation MSE:", avg_mse_test_net)
 ```
 
 # 4. Lasy losowe
@@ -480,8 +519,10 @@ write.csv(results_df, "random_forest_cv_results.csv", row.names = FALSE)
 
 Znajdujemy najlepszy zestaw hiperparametrów na podstawie walidacji krzyżowej.
 
-```{r najlepsze hiperparametry z CV}
+```{r najlepsze hiperparametry z CV, eval=TRUE}
 # Obliczamy średnie MSE po wszystkich foldach testowych dla danego zestawu parametrów.
+results_df <- readr::read_csv("random_forest_cv_results.csv")
+
 average_mse <- results_df %>%
     group_by(num_trees, depth, mtry) %>%
     summarise(avg_MSE = mean(MSE), .groups = 'drop')
@@ -497,8 +538,6 @@ Dla poprawy czytelności wykresu pudełkowego zostały stworzone $4$ oddzielne w
 Dodatkowo, na każdym wykresie pudełka są pokolorowane ze względu na parametr głębokości drzewa (_depth_).
 
 ```{r box plot - random forest, eval=TRUE, cache=TRUE}
-results_df <- readr::read_csv("random_forest_cv_results.csv")
-
 box_plots <- list()
 for (number_of_trees in num_trees) {
   # Filtrujemy dane ze względu na liczbę drzew
@@ -530,7 +569,7 @@ print(box_plots[[400]])
 
 ## $c)$ Błąd treningowy i walidacyjny dla wybranych wartości hiperparametrów
 
-```{r optymalne parametry oraz inicjalizacja}
+```{r optymalne parametry oraz inicjalizacja, eval=TRUE}
 print(average_mse[best_row, ])
 
 best_num_trees <- average_mse[best_row, ]$num_trees
@@ -581,14 +620,13 @@ for (i in seq_along(folds)) {
 ```
 
 
-```{r błędy dla pełnego modelu}
+```{r błędy dla pełnego modelu random forest}
 # Obliczamy MSE uśrednionego po wszystkich foldach
 avg_mse_train <- sum_mse_train / fold_count
 avg_mse_test <- sum_mse_test / fold_count
 
 cat("Average Training MSE:", avg_mse_train, "\n")
 cat("Average Validation MSE:", avg_mse_test)
-
 ```
 
 Otrzymaliśmy błąd treningowy na poziomie ok. 0.035 oraz błąd walidacyjny na poziomie  ok. 0.193
@@ -599,7 +637,7 @@ Widzimy, że błąd treningowy jest istotnie mniejszy od błędy walidacyjnego, 
 Najpierw dopasujmy prosty model referencyjny, który dowolnym wartościom zmiennych objaśniających w foldzie testowym przypisuje średnią arytmetyczną
 zmiennej objaśnianej policzoną w foldach treningowych.
 
-```{r model referencyjny}
+```{r model referencyjny, eval=TRUE}
 sum_mse_train_ref <- 0
 sum_mse_test_ref <- 0
 fold_count <- length(folds)
@@ -633,7 +671,7 @@ for (i in seq_along(folds)) {
 ```
 
 
-```{r wyniki CV dla modelu referencyjnego}
+```{r wyniki CV dla modelu referencyjnego, eval=TRUE}
 # Obliczamy MSE uśrednionego po wszystkich foldach
 avg_mse_train_ref <- sum_mse_train_ref / fold_count
 avg_mse_test_ref <- sum_mse_test_ref / fold_count
@@ -644,9 +682,14 @@ cat("Average Validation MSE for Reference Model:", avg_mse_test_ref, "\n")
 
 Błąd średniokwadratowy walidacyjny oraz treningowy modelu referencyjnego są bardzo zbliżone do siebie, jednak o wiele gorsze od wartości uzyskanych dla modeli _ElasticNet_ oraz lasów losowych.
 
-```{r tabela podsumowująca wyniki CV dla wszystkich modeli}
-# TODO
+```{r tabela podsumowująca wyniki CV dla wszystkich modeli, eval=TRUE}
+mse_data <- data.frame(
+    Model = c("ElasticNet", "Random Forest", "Ref. model"),
+    Train_MSE = c(avg_mse_train_net, 0.0346, avg_mse_train_ref),
+    Test_MSE = c(avg_mse_test_net, 0.1926, avg_mse_test_ref)
+)
 
+print(mse_data)
 ```
 
 Uważam, że przy uzyskanych wynikach najlepszy model to _ElasticNet_ z uwagi na zbliżone wartości $MSE$ do modelu lasów losowych. Dodatkowo model _ElasticNet_ jest o wiele
