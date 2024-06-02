@@ -21,6 +21,7 @@ library(caret)
 library(dplyr)
 library(glmnet)
 library(ranger)
+library(goftest)
 
 library(foreach)
 library(doParallel)
@@ -112,26 +113,37 @@ print(Var.heatmap)
 Najpierw rysujemy wykres kwantylowy porównujący zmienną objaśnianą z rozkładem normalnym.
 
 ```{r wykres kwantylowy, eval=TRUE}
-ggplot(data = Y_train) +
-  geom_qq(aes(sample = CD36), size=1.5, color = "red") +
-  geom_qq_line(aes(sample = CD36))
+qq_plot <- ggplot(data = Y_train, aes(sample = CD36)) +
+  geom_qq(color = "red", size = 1.5) +
+  geom_qq_line(color = "blue", linetype = "dashed") +
+  labs(title = "Q-Q Plot of CD36 against Normal Distribution",
+       x = "Theoretical Quantiles",
+       y = "Sample Quantiles")
+
+print(qq_plot)
 ```
 
-Nie jesteśmy w stanie odczytać średniej z tego wykresu, natomiast kształt litery 'S' wykresu doświadczalnego (mocno spłaszczony z lewej) wskazuje na wariancję mniejszą niż
-rozkładu normalnego.
+Nie jesteśmy w stanie odczytać średniej z tego wykresu, natomiast kształt litery 'S' wykresu doświadczalnego (mocno spłaszczony z lewej) wskazuje na wariancję mniejszą niż rozkładu normalnego.
 
 ## $b)$ Test hipotezy zgodności z rozkładem normalnym
 
-Przeprowadźmy test zgodności zmiennej objaśnianej z rozkładem normalnym.
+Przeprowadźmy test zgodności zmiennej objaśnianej z rozkładem normalnym. Wykorzystam do tego test Andersona-Darlinga. Możemy z niego skorzystać, gdyż nie ma potrzeby estymacji parametrów testowanej dystrybucji.
+
+$H_0$ - rozkład zmiennej objaśnianej pochodzi z rozkładu normalnego
+$H_1$ - rozkład zmiennej nie pochodzi z rozkładu normalnego
+
+$\alpha$ - ustalamy poziom istotności na poziomie 0.01
 
 ```{r test zgodności Y z rozkładem normalnym}
+x <- Y_train$CD36
+ad_result <- ad.test(x, "pnorm", mean=mean(x), sd=sd(x), estimated=TRUE)
 
-# TODO
-plot(sort(Y_train$CD36))
-
+print(ad_result)
 ```
 
-TODO: Komentarz
+![Test zgodności A-D](test_A-D.png)
+
+Z uwagi na wyniku testu (zarówno dużą wartość statystyki $A$ oraz małe $p\text{-value}$) odrzucamy hipotezę zerową. Stąd przyjmujemy, że test nie pochodzi z rozkładu normalnego.
 
 ## $c)$ Pozostałe testy statystyczne dla jednej zmiennej objaśniającej
 
@@ -145,7 +157,42 @@ most_correlated_var_name <- colnames(X_train)[max_cor_index]
 cat("Najbardziej skorelowaną zmienną objaśniającą jest:", most_correlated_var_name, "z korelacją: ", cor_vec[max_cor_index], "\n")
 ```
 
-### $i.$ Test zgodności z rozkładem TODO
+### $i.$ Test zgodności z rozkładem wykładniczym o $\lambda = 8$
+
+Na podstawie poniższego wykresu przeprowadzę test zgodności zmiennej z rozkładem wykładniczym o parametrze $\lambda = 8$.
+
+```{r histogram skorelowanej, eval=TRUE}
+lambda <- 8
+
+p <- ggplot(data = X_train, aes_string(x = most_correlated_var_name)) +
+  geom_histogram(aes(y = ..density..), color = "black", fill = "white", bins = 100) + 
+  stat_function(fun = function(x) dexp(x, rate = lambda), color = "red") +
+  labs(title = paste("Histogram and Exponential Fit for", most_correlated_var_name),
+       x = most_correlated_var_name, 
+       y = "Density")
+
+print(p)
+```
+
+Ponownie wykorzystam do tego test Andersona-Darlinga. Możemy z niego skorzystać, gdyż nie ma potrzeby estymacji parametrów testowanej dystrybucji.
+
+$H_0$ - rozkład zmiennej objaśnianej pochodzi z rozkładu wykładniczego, $\lambda = 8$
+$H_1$ - rozkład zmiennej nie pochodzi z tego rozkładu
+
+$\alpha$ - ustalamy poziom istotności na poziomie 0.01
+
+```{r test A-D}
+test_data <- X_train[[most_correlated_var_name]]
+exp_cdf <- function(x) 1 - exp(-8 * x)
+ad_result <- ad.test(test_data, exp_cdf)
+
+print(ad_result)
+```
+
+![Test zgodności A-D z rozkładem wykładnicznym](text_exp.png)
+
+Tym samym odrzucamy hipotezę zerową ($\alpha < 0$), iż rozkład zmiennej objaśniającej najbardziej skorelowanej ze zmienną objaśnianą pochodzi z rozkładu
+wykładniczego o paramatrze $\lambda = 8$.
 
 ### $ii.$ Test lokalizacji rozkładu w zbiorze testowym i treningowym
 
