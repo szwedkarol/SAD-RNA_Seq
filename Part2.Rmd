@@ -1,0 +1,38 @@
+---
+title: "Part 2"
+author: "Karol Szwed"
+date: "`r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+knitr::opts_chunk$set(eval = FALSE)
+
+
+library(ggplot2)
+library(reshape2)
+library(caret)
+library(dplyr)
+library(glmnet)
+library(ranger)
+library(goftest)
+
+library(foreach)
+library(doParallel)
+```
+
+# 1. Eksploracja danych
+
+```{r wczytywanie danych, eval=TRUE}
+X_test <- read.csv("X_test.csv")
+X_train <- read.csv("X_train.csv")
+Y_train <- read.csv("y_train.csv")
+```
+
+
