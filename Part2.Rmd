@@ -90,7 +90,7 @@ filter_features_by_variance <- function(dataSet, variance_threshold = 0.1, plot 
     return(filtered_dataSet)
 }
 
-X_dataSet <- filter_features_by_variance(X_train, variance_threshold = 0.1)
+#X_dataSet <- filter_features_by_variance(X_train, variance_threshold = 0.1)
 ```
 
 # 3. Random Forest
@@ -120,11 +120,11 @@ folds <- create_folds(X_train, k = 10)
 
 
 ```{r Random Forest}
-X_dataSet <- X_train
+#X_dataSet <- X_train
 
-best_num_trees <- 800
-best_depth <- 30
-best_mtry <- 500
+best_num_trees <- 3000
+best_depth <- 20
+best_mtry <- 600
 
 sum_mse_train <- 0
 sum_mse_test <- 0
@@ -133,7 +133,7 @@ fold_count <- length(folds)
 
 
 
-```{r pełny model dla optymalnych parametrów, cache=TRUE}
+```{r Random Forest CV, cache=TRUE}
 for (i in seq_along(folds)) {
     fold <- folds[[i]]
         
@@ -173,6 +173,32 @@ for (i in seq_along(folds)) {
 
 
 
+```{r full random forest}
+rf <- ranger(
+        formula         = Y ~ .,      
+        data            = data.frame(Y = Y_train[, ], X_train[, ]),
+        num.trees       = best_num_trees,
+        mtry            = best_mtry,
+        max.depth       = best_depth,
+        min.node.size   = 5,    # Default for regression
+        seed            = 1234,
+        verbose         = TRUE,
+        num.threads     = 7
+)
+
+rf_predictions <- predict(rf, X_test)$predictions
+
+results_rf <- data.frame(
+    Id = 0:(length(rf_predictions) - 1),
+    Expected = rf_predictions
+)
+
+# Write the results to a CSV file
+write.csv(results_rf, "rf_predictions.csv", row.names = FALSE)
+```
+
+
+
 ```{r błędy dla pełnego modelu random forest}
 # Obliczamy MSE uśrednionego po wszystkich foldach
 avg_mse_train <- sum_mse_train / fold_count
@@ -185,16 +211,16 @@ cat("Average Validation MSE:", avg_mse_test)
 
 
 ```{r preparing data for XGBoost}
-X_train <- X_dataSet
+#X_train <- X_dataSet
 
 # Parameters for XGBoost model
 params <- list(
     booster = "gbtree",
     objective = "reg:squarederror",  # Use reg:squarederror for regression tasks
     eta = 0.01,                       # Learning rate
-    max_depth = 8,                   # Depth of trees
-    subsample = 0.7,                 # Subsampling of the training instances
-    colsample_bytree = 0.7           # Subsample ratio of columns when constructing each tree
+    max_depth = 6,                   # Depth of trees
+    subsample = 0.5,                 # Subsampling of the training instances
+    colsample_bytree = 0.5           # Subsample ratio of columns when constructing each tree
 )
 ```
 
@@ -219,14 +245,14 @@ for (i in seq_along(folds)) {
                          label = Y_train[test_indices, ])
     
     # Number of rounds for XGBoost
-    num_rounds <- 500
+    num_rounds <- 3000
     
     # Train model
     bst_model <- xgb.train(params = params,
                            data = dtrain,
                            nrounds = num_rounds,
                            watchlist = list(train = dtrain, test = dtest),
-                           print_every_n = 20,
+                           print_every_n = 100,
                            eval_metric = "rmse",
                            nthread = 7)
 
@@ -242,6 +268,57 @@ for (i in seq_along(folds)) {
 average_mse <- mean(mse_list)
 print(paste("Average MSE across all folds: ", average_mse))
 
+
+```
+
+
+
+```{r full XGBoost}
+# Number of rounds for XGBoost
+num_rounds <- 3000
+    
+# Create DMatrices for train and test sets
+dtrain <- xgb.DMatrix(data = as.matrix(X_train[, ]),
+                          label = Y_train[, ])
+
+dtest <- xgb.DMatrix(data = as.matrix(X_test[, ]))
+
+# Train model
+bst_model <- xgb.train(params = params,
+                           data = dtrain,
+                           nrounds = num_rounds,
+                           watchlist = list(train = dtrain),
+                           print_every_n = 100,
+                           eval_metric = "rmse",
+                           nthread = 7)
+
+xgb_pred <- predict(bst_model, dtest)
+
+results_xgb <- data.frame(
+    Id = 0:(length(xgb_pred) - 1),
+    Expected = xgb_pred
+)
+
+# Write the results to a CSV file
+write.csv(results_xgb, "xgb_predictions.csv", row.names = FALSE)
+
+```
+
+
+```{r avg of xgboost and random forest}
+avg_pred <- (xgb_pred + rf_predictions) / 2
+
+print(median(rf_predictions))
+print(median(xgb_pred))
+print(median(avg_pred))
+
+results_avg <- data.frame(
+    Id = 0:(length(avg_pred) - 1),
+    Expected = avg_pred
+)
+
+# Write the results to a CSV file
+write.csv(results_avg, "avg_predictions.csv", row.names = FALSE)
 
 ```
 
