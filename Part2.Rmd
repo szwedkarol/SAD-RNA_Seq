@@ -226,7 +226,7 @@ params <- list(
 
 
 
-```{r training XGBoost}
+```{r CV for XGBoost}
 # Initialize list to store predictions for each fold
 predictions_list <- list()
 mse_list <- numeric(length(folds))  # To store MSE for each fold
@@ -273,6 +273,17 @@ print(paste("Average MSE across all folds: ", average_mse))
 
 
 
+```{r postprocess of predictions for xgboost}
+# True values for this prediction task are non-negative
+adjust_predictions <- function(predictions) {
+  # Replace negative values with 0
+  predictions[predictions < 0] <- 0
+  return(predictions)
+}
+```
+
+
+
 ```{r full XGBoost}
 # Number of rounds for XGBoost
 num_rounds <- 3000
@@ -293,6 +304,8 @@ bst_model <- xgb.train(params = params,
                            nthread = 7)
 
 xgb_pred <- predict(bst_model, dtest)
+
+xgb_pred <- adjust_predictions(xgb_pred)
 
 results_xgb <- data.frame(
     Id = 0:(length(xgb_pred) - 1),
