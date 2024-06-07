@@ -16,13 +16,15 @@ knitr::opts_chunk$set(eval = FALSE)
 
 
 library(ggplot2)
-library(reshape2)
 library(caret)
 library(dplyr)
-library(glmnet)
 library(ranger)
-library(goftest)
 library(xgboost)
+library(mlr3)
+library(mlr3learners)
+library(mlr3filters)
+library(mlr3fselect)
+library(mlr3pipelines)
 
 library(foreach)
 library(doParallel)
@@ -32,13 +34,16 @@ library(doParallel)
 
 ```{r wczytywanie danych, eval=TRUE}
 X_test <- read.csv("X_test.csv")
-X_train <- read.csv("X_train.csv")
+X_train_full <- read.csv("X_train.csv")
 Y_train <- read.csv("y_train.csv")
 ```
 
 # 2. Filtrowanie po wariancji
 
-```{r variance filtering, fig.width=12, eval=FALSE}
+Aby poprawić tempo nauki oraz pozbyć się zmiennych głównie stanowiących wprowadzających szum, stosuję najpierw filtrowanie po wariancji zmiennej.
+Tym samym pozbywam się zmiennych o wariancji poniżej 0.05, co stanowi ok. 50% wszystkich zmiennych objaśniających.
+
+```{r variance filtering, fig.width=12, eval=TRUE}
 plot_feature_variance <- function(feature_variance) {
     # Sample of p% of the features for plotting
     p <- 50
@@ -90,12 +95,58 @@ filter_features_by_variance <- function(dataSet, variance_threshold = 0.1, plot 
     return(filtered_dataSet)
 }
 
-#X_dataSet <- filter_features_by_variance(X_train, variance_threshold = 0.1)
+X_train <- X_train_full
+X_train <- filter_features_by_variance(X_train, variance_threshold = 0.05)
 ```
 
-# 3. Random Forest
+# 3. Filtrowanie po _information gain_ oraz _impurity_ na podstawie lasów losowych.
 
-```{r - tworzenie foldów do walidacji krzyżowej, eval=TRUE}
+Stosuję te filtry w celu znalezienia zmiennych, na podstawie których najlepiej modele będą w stanie się uczyć. Tym samym pozbywam się zmiennych majających
+mały wpływ na wartość zmiennej objaśnianej.
+
+```{r mlr3 filters, eval=TRUE}
+select_top_features <- function(task, n_features = 500) {
+    n_each <- ceiling(n_features / 2)
+  
+    # Information gain filter
+    filter = flt("information_gain")
+    filter$calculate(task)
+    print(head(filter$scores))
+
+    # Sort scores in decreasing order and select top features
+    scores <- filter$scores
+    top_features <- names(sort(scores, decreasing = TRUE)[1:n_each])
+    
+    # Random Forest importance for regression
+    learner <- lrn("regr.ranger", importance = "impurity")
+    learner$train(task)
+    importance_scores <- learner$importance()
+    
+    print(head(sort(importance_scores, decreasing = TRUE)[1:n_each]))
+    
+    top_features <- c(top_features, names(sort(importance_scores, decreasing = TRUE)[1:n_each]))
+
+    # Return the names of the top features
+    return(top_features)
+}
+
+# Create a classification task
+names(Y_train) <- "target_CD36"
+task <- TaskRegr$new(id = "my_data", backend = data.frame(X_train, Y_train), target = "target_CD36")
+
+top_feat <- select_top_features(task, n_features = 500)
+
+X_train <- X_train[, top_feat]
+```
+
+
+
+# 4. Lasy losowe
+
+Skorzystam m. in. z modelu lasów losowych, gdyż już podczas 1. części projektu dawał on obiecujące rezultaty. Spodziewamy się uzyskać tym lepszy wynik,
+gdy dodatkowo zastosujemy filtrowanie po _information gain_ oraz _impurity_.
+
+```{r - tworzenie foldów do walidacji krzyżowej, eval=FALSE}
 # Tworzy 'k' foldów do walidacji krzyżowej
 create_folds <- function(data, k = 10) {
   set.seed(123)  # Ustalamy ziarno dla powtarzalności wyników
@@ -117,21 +168,19 @@ create_folds <- function(data, k = 10) {
 folds <- create_folds(X_train, k = 10)
 ```
 
-
+Zapisujemy parametry, które okazały się najlepsze podczas walidacji krzyżowej.
 
 ```{r Random Forest}
-#X_dataSet <- X_train
-
-best_num_trees <- 3000
-best_depth <- 20
-best_mtry <- 600
+best_num_trees <- 1000
+best_depth <- 30
+best_mtry <- 250
 
 sum_mse_train <- 0
 sum_mse_test <- 0
 fold_count <- length(folds)
 ```
 
-
+Aby wyłonić najlepsze parametry skorzystamy z tej samej procedury, co w punkcie $5)$ pierwszej części projektu.
 
 ```{r Random Forest CV, cache=TRUE}
 for (i in seq_along(folds)) {
@@ -171,7 +220,7 @@ for (i in seq_along(folds)) {
 }
 ```
 
-
+Uczymy teraz model na pełnych danych z użyciem najlepszych wyłonionych parametrów.
 
 ```{r full random forest}
 rf <- ranger(
@@ -186,7 +235,9 @@ rf <- ranger(
         num.threads     = 7
 )
 
-rf_predictions <- predict(rf, X_test)$predictions
+# Scaling the data
+X_test_scaled_flt <- scale(X_test[, top_feat], center = TRUE)
+rf_predictions <- predict(rf, X_test_scaled_flt)$predictions
 
 results_rf <- data.frame(
     Id = 0:(length(rf_predictions) - 1),
@@ -208,23 +259,29 @@ cat("Average Training MSE:", avg_mse_train, "\n")
 cat("Average Validation MSE:", avg_mse_test)
 ```
 
+# 5. Model _eXtreme Gradient Boosting_
 
+Z uwagi na dużą złożoność danych (wiele zmiennych), małą próbką oraz potencjalne nieoczywiste zależności pomiędzy zmiennymi, korzystam z modelu
+_XGBoost_ w wersji dla zadania regresji.
+
+Niżej najlepszy zestaw parametrów wyłoniony podczas walidacji krzyżowej. W trakcie testów oraz na podstawie wyników na Kaggle
+okazało się, iż dobrze sobie radzą modele w pewnym stopniu przeuczone na zbiorze treningowym.
 
 ```{r preparing data for XGBoost}
-#X_train <- X_dataSet
+X_train <- scale(X_train, center = TRUE)
 
 # Parameters for XGBoost model
 params <- list(
     booster = "gbtree",
-    objective = "reg:squarederror",  # Use reg:squarederror for regression tasks
-    eta = 0.01,                       # Learning rate
-    max_depth = 6,                   # Depth of trees
-    subsample = 0.5,                 # Subsampling of the training instances
-    colsample_bytree = 0.5           # Subsample ratio of columns when constructing each tree
+    objective = "reg:squarederror",
+    eta = 0.01,                      # Learning rate
+    max_depth = 7,                   # Depth of trees
+    subsample = 0.8,                 # Subsampling of the training instances
+    colsample_bytree = 0.8           # Subsample ratio of columns when constructing each tree
 )
 ```
 
-
+Metoda do walidacji krzyżowej modelu XGBoost, analogiczna co dla modelu lasów losowych.
 
 ```{r CV for XGBoost}
 # Initialize list to store predictions for each fold
@@ -267,11 +324,10 @@ for (i in seq_along(folds)) {
 # Calculate average MSE across all folds
 average_mse <- mean(mse_list)
 print(paste("Average MSE across all folds: ", average_mse))
-
-
 ```
 
-
+Model _XGBoost_ czasami zwraca ujemną predykcję dla zmiennej objaśnianej, która przyjmuje tylko wartości nieujmne, stąd wszystkie predykcje
+ujemne zamieniamy na zero.
 
 ```{r postprocess of predictions for xgboost}
 # True values for this prediction task are non-negative
@@ -282,17 +338,20 @@ adjust_predictions <- function(predictions) {
 }
 ```
 
-
+Teraz trenujemy pełny model z najlepszym znaleziomym zestawem parametrów.
 
 ```{r full XGBoost}
 # Number of rounds for XGBoost
-num_rounds <- 3000
+num_rounds <- 2500
     
 # Create DMatrices for train and test sets
 dtrain <- xgb.DMatrix(data = as.matrix(X_train[, ]),
                           label = Y_train[, ])
 
-dtest <- xgb.DMatrix(data = as.matrix(X_test[, ]))
+X_test_scaled_flt <- scale(X_test[, top_feat], center = TRUE)
+
+# Prediction is done only based on the top features
+dtest_filtered <- xgb.DMatrix(data = as.matrix(X_test_scaled_flt))
 
 # Train model
 bst_model <- xgb.train(params = params,
@@ -303,8 +362,13 @@ bst_model <- xgb.train(params = params,
                            eval_metric = "rmse",
                            nthread = 7)
 
-xgb_pred <- predict(bst_model, dtest)
+xgb_pred <- predict(bst_model, dtest_filtered)
+```
 
+Zapisujemy wyniki (po ich skorygowaniu) do pliku CSV.
+
+```{r saving predictions to a file}
+# xgb_pred <- read.csv("xgb_predictions.csv")
 xgb_pred <- adjust_predictions(xgb_pred)
 
 results_xgb <- data.frame(
@@ -314,16 +378,12 @@ results_xgb <- data.frame(
 
 # Write the results to a CSV file
 write.csv(results_xgb, "xgb_predictions.csv", row.names = FALSE)
-
 ```
 
+Niewielką poprawę wyniku dawało również uśrednienie modelu _XGBoost_ oraz lasów losowych.
 
 ```{r avg of xgboost and random forest}
 avg_pred <- (xgb_pred + rf_predictions) / 2
-
-print(median(rf_predictions))
-print(median(xgb_pred))
-print(median(avg_pred))
 
 results_avg <- data.frame(
     Id = 0:(length(avg_pred) - 1),
@@ -332,7 +392,6 @@ results_avg <- data.frame(
 
 # Write the results to a CSV file
 write.csv(results_avg, "avg_predictions.csv", row.names = FALSE)
-
 ```
 
 
