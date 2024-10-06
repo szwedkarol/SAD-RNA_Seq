@@ -47,3 +47,9 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+
+# Data sources (too large files)
+X_test.csv
+X_train.csv
+y_train.csv
